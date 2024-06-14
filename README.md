@@ -31,7 +31,7 @@ SSD should successfully increment every second from 0-9.
               4. Remove usb cables to observe SSD increment with exteral power supply.  
 Requires Flight Computer with onboard SSD and Science Board, as well as 3.3V and 5V power supply rails. 
 
-UDIP2024FlightSoftware: Requires full stack: EPS (or emulator with active 3.3V/5V/12V power rails), Flight Computer, and Science Board. 
+UDIP2024_FlightSoftware.cpp: Requires full stack: EPS (or emulator with active 3.3V/5V/12V power rails), Flight Computer, and Science Board. 
 
 Miscellaneous:
 
