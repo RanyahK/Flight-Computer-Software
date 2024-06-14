@@ -129,6 +129,14 @@ bool accelCheck();
 uint16_t getADC(int ADCpin);
 uint16_t getTemp();
 
+breakoutPin SCL = I2C_SDA_2;
+breakoutPin SDA = I2C_SCL_2;
+
+const int addr8bit = 0x2B;       // 8 bit I2C address
+const int addr7bit = 0x2B << 1;  // 7 bit I2C address
+
+
+
 int tstart;
 int tend;
 
@@ -164,7 +172,7 @@ uint32_t launchTime;  //constant
 uint32_t measurement_time;
 byte swpPckt[2071];  //Array for storing sweep packets
 uint32_t counter;    //counter for UDIP Files - new file every boot up for packet storage (stored in flash)
-bool relay_pos = 0;   //Keeping Track of Ground Relay Switch State
+bool relay_pos = 0;  //Keeping Track of Ground Relay Switch State
 
 
 void GroundCheck();  // Ground Switching
@@ -201,9 +209,16 @@ byte Chars[17][7]{
   { 0, 0, 0, 0, 0, 0, 0 }   //blank
 };
 void displayPrint(char n);
-breakoutPin GP5 = GPIO_5; //Sweep Trigger
+breakoutPin GP5 = GPIO_5;  //Sweep Trigger
 //#define CLEAN_SDCARD //Uncomment if want to delete all files in SDCARD
 //#define RESET_COUNTER //Uncomment if want to reset counter back to 0
+void i2c_delay() {
+  delayMicroseconds(10);
+}
+void i2c_start();
+void i2c_stop();
+bool i2c_write_byte(uint8_t data);
+void petDog();
 
 
 void setup() {
@@ -213,7 +228,13 @@ void setup() {
   mySerial2.begin(115200);
   flash_init();
   sd_init();
+  //I2C Setup
   Breakout.I2C_0.begin();
+  pinMode(SDA, OUTPUT);
+  pinMode(SCL, OUTPUT);
+  digitalWrite(SDA, HIGH);
+  digitalWrite(SCL, HIGH);
+  //i2c_start();
   //Display setup
   pinMode(seg[0], OUTPUT);
   pinMode(seg[1], OUTPUT);
@@ -228,11 +249,11 @@ void setup() {
   pinMode(GP5, OUTPUT);
   pinMode(PWM0, OUTPUT);
   pinMode(PWM1, OUTPUT);
-  analogWrite(PWM0, 0); // Make sure relay is OPEN
-  analogWrite(PWM1, 0); // Make sure relay is OPEN
+  analogWrite(PWM0, 0);       // Make sure relay is OPEN
+  analogWrite(PWM1, 0);       // Make sure relay is OPEN
   analogWriteResolution(12);  //Limits ADCS to 12-bit resolution on portenta
   analogReadResolution(12);   //Same thing
-  digitalWrite(GP5, LOW); //Set default state of Sweep Trigger
+  digitalWrite(GP5, LOW);     //Set default state of Sweep Trigger
 
   //9 DoF Sensor Setup
   if (!MidIMU.begin())  // with no arguments, this uses default addresses (AG:0x6B, M:0x1E) and i2c port (Wire).
@@ -245,8 +266,8 @@ void setup() {
     }
     if (i == 5) {
       MidIMUFlag = false;
-        displayPrint(0x05);
-        delay(10000);
+      displayPrint(0x05);
+      delay(10000);
     }
   }
   if (MidIMUFlag) {
@@ -274,6 +295,7 @@ void setup() {
 
 
 void loop() {
+  petDog(); // Reset EPS Watchdog (with pets)
   if (phase == 1) {  //Power on, Collect High Rate Sensor Data
     displayPrint(0x01);
     makeSensPckt(sensPckt, &count);
@@ -288,7 +310,7 @@ void loop() {
     makeSensPckt(sensPckt, &count);
     sd_write(sensPckt);
     //Serial.println("To phase 3!");
-    if (measurement_time >= 10 * 1000) {
+    if (measurement_time >= 50 * 1000) {
       phase = 3;
     }
 
@@ -299,17 +321,15 @@ void loop() {
     sd_write(sensPckt);
     sweepInit();
     PD_initial = getADC(ADC_PD1);  //Grab initial PD reading before sweep
-    //insert instruct scienceboard function
-     GroundCheck();
+    GroundCheck(); //Check if we need to flip relay or update header info
     sweepWriteSD();
     if (measurement_time >= 400 * 1000) {
       phase = 4;
-      //Serial.println("To phase 4!");
     }
   } else if (phase == 4) {  //After 350 seconds, stop sweeps, low rate sensor measurements
     analogWrite(PWM1, 0);
     digitalWrite(GP5, LOW);
-    analogWrite(PWM0, 0); // Make sure relay is OPEN
+    analogWrite(PWM0, 0);  // Make sure relay is OPEN
     makeSensPckt(sensPckt, &count);
     sd_write(sensPckt);
     displayPrint(0x04);
@@ -329,22 +349,15 @@ void sweepWriteSD() {
     }
   }
   //Now put in the PD values
-
-  
   uint16_t ADC_Final = getADC(ADC_PD1);
   memcpy(&swpPckt[HEDR_LEN + SWP_POS_PD1_FINAL], &ADC_Final, 2);
   memcpy(&swpPckt[HEDR_LEN + SWP_POS_PD1_INITIAL], &PD_initial, 2);
-  
+
+
   /*
-  uint16_t mn = (swpPckt[HEDR_LEN + SWP_POS_PD1_FINAL+1]) << 8 | swpPckt[HEDR_LEN + SWP_POS_PD1_FINAL];
-  uint16_t xyz = (swpPckt[HEDR_LEN + SWP_POS_PD1_INITIAL+1]) << 8 | swpPckt[HEDR_LEN + SWP_POS_PD1_INITIAL];
-  Serial.print("PD FINAL: "); Serial.println((mn / 4) * (4.76/1023) );
-  Serial.print("PD FINAL: "); Serial.println((xyz / 4) * (4.76/1023) );
-  
   swpPckt[HEDR_LEN + SWP_POS_PD1_FINAL] = getADC(ADC_PD1);
   swpPckt[HEDR_LEN + SWP_POS_PD1_INITIAL] = PD_initial;
   */
-  
   sd_write_sweep(swpPckt);
 }
 
@@ -639,37 +652,38 @@ void displayPrint(char n) {
 //Flips ground state to opposite state
 void GroundCheck() {
   //Everytime a high density sweep is detected, flip ground on OR off
-   if (swpPckt[HEDR_POS_TYPE] == 0x10) {
+  if (swpPckt[HEDR_POS_TYPE] == 0x10) {
     if (relay_pos == 1) {
       analogWrite(PWM0, 0);
       analogWrite(PWM1, 0);
       delay(15);
       rcktGND = false;
-      relay_pos= !relay_pos;
+      relay_pos = !relay_pos;
     } else {
       analogWrite(PWM0, 4095);
       analogWrite(PWM1, 800);
       rcktGND = true;
       delay(15);
-      relay_pos= !relay_pos;
+      relay_pos = !relay_pos;
     }
-}
+  }
 }
 //Instruct SB To Start Sweeps
 void sweepInit() {
   digitalWrite(GP5, HIGH);
-  while(!mySerial2.available())
-  {
+  while (!mySerial2.available()) {
     ;
-  } //once SB starts sweeps, waits until there is data in buffer to start reading
+  }  //once SB starts sweeps, waits until there is data in buffer to start reading
   digitalWrite(GP5, LOW);
   mySerial2.readBytes(swpPckt, 2071);  //reads the whole packet (2072 bytes)
-  mySerial2.read();  // to flush
-  /*
-  Serial.print("VPOS: "); Serial.println(((swpPckt[HEDR_LEN + SWP_POS_VPOS + 1] << 8 | swpPckt[HEDR_LEN + SWP_POS_VPOS]) / 4) * (4.76/1023) );
-  Serial.print("VNEG: "); Serial.println(((swpPckt[HEDR_LEN + SWP_POS_VNEG + 1] << 8 | swpPckt[HEDR_LEN + SWP_POS_VNEG]) / 4) * (4.76/1023) );
-  Serial.print("Count: "); Serial.println(swpPckt[HEDR_POS_COUNT + 1] << 8 | swpPckt[HEDR_POS_COUNT]);*/
-  
+  mySerial2.read();                    // to flush
+
+  Serial.print("VPOS: ");
+  Serial.println(((swpPckt[HEDR_LEN + SWP_POS_VPOS + 1] << 8 | swpPckt[HEDR_LEN + SWP_POS_VPOS]) / 4) * (4.76 / 1023));
+  Serial.print("VNEG: ");
+  Serial.println(((swpPckt[HEDR_LEN + SWP_POS_VNEG + 1] << 8 | swpPckt[HEDR_LEN + SWP_POS_VNEG]) / 4) * (4.76 / 1023));
+  Serial.print("Count: ");
+  Serial.println(swpPckt[HEDR_POS_COUNT + 1] << 8 | swpPckt[HEDR_POS_COUNT]);
 }
 
 //Write sweeps to SD CARD. Different length than sens payload so has its own function
@@ -688,3 +702,61 @@ void sd_write_sweep(byte *packet) {
     //Serial.println("Failed to open file for writing");
   }
 }
+
+//Setting up fake i2c
+
+//Start Condition: The SDA line switches from a high voltage level to a low voltage level before the SCL line switches from high to low.
+void i2c_start() {
+  digitalWrite(SDA, HIGH);
+  digitalWrite(SCL, HIGH);
+  i2c_delay();
+  digitalWrite(SDA, LOW);
+  i2c_delay();
+  digitalWrite(SCL, LOW);
+  i2c_delay();
+}
+
+//Stop Condition: The SDA line switches from a low voltage level to a high voltage level after the SCL line switches from low to high.
+void i2c_stop() {
+  digitalWrite(SDA, LOW);
+  i2c_delay();
+  digitalWrite(SCL, HIGH);
+  i2c_delay();
+  digitalWrite(SDA, HIGH);
+  i2c_delay();
+}
+
+bool i2c_write_byte(uint8_t data) {
+  for (int i = 0; i < 8; i++) {
+    digitalWrite(SDA, (data & 0x80) ? HIGH : LOW);
+    data <<= 1;
+    i2c_delay();
+    digitalWrite(SCL, HIGH);
+    i2c_delay();
+    digitalWrite(SCL, LOW);
+  }
+
+  // Check for ACK from slave
+  pinMode(SDA, INPUT);
+  i2c_delay();
+  digitalWrite(SCL, HIGH);
+  bool ack = !digitalRead(SDA);  // ACK is 0
+  digitalWrite(SCL, LOW);
+  pinMode(SDA, OUTPUT);
+  return ack;
+}
+ 
+void petDog(){
+    i2c_start();
+    if (!i2c_write_byte(addr7bit | 0)) {  // 0 write bit - master sending data / 1 - master receiving
+        //Serial.println("NACK received for address");
+    }
+    if (!i2c_write_byte(0x22)) {  // Write data byte 0x22
+        //Serial.println("NACK received for data byte 0x22");
+    }
+    if (!i2c_write_byte(0x00)) {  // Write data byte 0x00
+        //Serial.println("NACK received for data byte 0x00");
+    }
+    i2c_stop();
+}
+
