@@ -250,6 +250,7 @@ public:
     UART UART2;
     UART UART3;
     MbedSPI SPI_0;
+    MbedSPI SPI_1;
     MbedSPI SD0;
     //HWClock RTClock;
     BreakoutCarrierClass() : I2C_0(PH_8,PH_7),
@@ -260,12 +261,11 @@ public:
                              UART2(PG_14, PG_9, NC, NC),
                              UART3(PJ_8, PJ_9, NC, NC),
                              SPI_0(PC_2, PC_3, PI_1), //CIPO COPI CK
+                             SPI_1(SPI1_CIPO, SPI1_COPI, SPI1_CS), //CIPO COPI CK
                              SD0(PB_4, PD_7, PD_6)
                              //RTClock()
     {
     }
 };
-
-extern BreakoutCarrierClass Breakout;
 
 #endif // ARDUINO_PORTENTA_BREAKOUT_H
