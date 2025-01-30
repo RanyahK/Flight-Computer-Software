@@ -22,17 +22,16 @@ SDMMCBlockDevice block_device;
 mbed::FATFileSystem fs("fs");
 
 using namespace mbed;
-
 uint32_t counter; 
 
 //Sevenseg setup
-breakoutPin A = PWM9;
-breakoutPin B = PWM8;
+breakoutPin A = PWM8;
+breakoutPin B = PWM9;
 breakoutPin C = PWM7;
-breakoutPin D = PWM6;
-breakoutPin E = PWM5;
-breakoutPin Z = PWM4;
-breakoutPin G = PWM3;
+breakoutPin D = PWM3;
+breakoutPin E = PWM4;
+breakoutPin Z = PWM5;
+breakoutPin G = PWM6;
 breakoutPin DP = PWM2;
 
 
@@ -63,6 +62,7 @@ void displayPrint(char n) {
   }
 }
 
+
 void deleteAllFiles(const char *path) {
   DIR *dir;
   struct dirent *ent;
@@ -92,7 +92,6 @@ void deleteAllFiles(const char *path) {
       ;
   }
 }
-
 // Initialize SD CARD
 void sd_init() {
   //Serial.println("Mounting SDCARD...");
@@ -114,7 +113,7 @@ void sd_init() {
   struct dirent *ent;
   int dirIndex = 0;
   Serial.println("List SDCARD content: ");
-  if ((dir = opendir("/fs/UDIP2024")) != NULL) {
+  if ((dir = opendir("/fs")) != NULL) {
     // Print all the files and directories within directory (not recursively)
     while ((ent = readdir(dir)) != NULL) {
       Serial.println(ent->d_name);
@@ -127,7 +126,7 @@ void sd_init() {
 
   Serial.println("Closed Dir");
 #ifdef CLEAN_SDCARD
-  deleteAllFiles("/fs/UDIP2024");
+  deleteAllFiles("/fs");
 #endif
 }
 
@@ -137,7 +136,6 @@ void sd_write(byte *packet) {
 
   char filename[256];
   snprintf(filename, sizeof(filename), "/fs/UDIP2024/UDIP%d.dat", counter);
-
   FILE *mf = fopen(filename, "ab");
   if (mf != NULL) {
     size_t bytesWritten = fwrite(packet, sizeof(uint8_t), 39, mf);
@@ -211,7 +209,6 @@ void flash_init() {
   blockDevice.deinit();
 }
 
-
 void setup() {
 
   pinMode(seg[0], OUTPUT);
@@ -228,22 +225,19 @@ void setup() {
 
   Serial.begin(115200);
 
-  sd_init();
   flash_init();
+  sd_init();
 
 }
 
 void loop(){
 
   byte testPacket[39] = { 'T', 'e', 's', 't', ' ', 'P', 'a', 'c', 'k', 'e', 't', ' ', 'D', 'a', 't', 'a', ' ', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J' };
+    displayPrint(0x01);
+    sd_write(testPacket);
 
   Serial.print("File Counter: ");
   Serial.println(counter);
-  // Write the test packet to the SD card
-  sd_write(testPacket);
-
-  // Read the packet back from the SD card
-  sd_read(counter);
 
   // Wait for a while before repeating the test
   delay(10000);

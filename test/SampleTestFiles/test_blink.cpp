@@ -13,6 +13,7 @@
 #include <stdio.h>
 
 using namespace mbed;
+breakoutPin GP3 = GPIO_3;  //Sweep Trigger
 
 void setup()
 {
